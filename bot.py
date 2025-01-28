@@ -3,6 +3,8 @@ from telebot import types
 from gradio_client import Client
 import sqlite3
 import json
+import os
+import sys
 
 TOKEN = '7821415435:AAFa5yDOmYiOIwFCfbLyoRTnJIcD0Ulzo5Q'
 bot = telebot.TeleBot(TOKEN)
@@ -28,7 +30,12 @@ init_db()
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
-# Инлайн-режим
+def stop_game(message):
+    chat_id = message.chat.id
+    if chat_id in game_states:
+        del game_states[chat_id]
+    bot.send_message(chat_id, "🛑 Игра остановлена")
+
 @bot.inline_handler(lambda query: len(query.query) > 0)
 def handle_inline_query(inline_query):
     try:
@@ -87,13 +94,14 @@ def send_help(message):
     /start - начать работу
     /help - показать это сообщение
     /clear - сбросить историю чата
+    /game - начать игру
+    
     """
     
     if is_admin(message.from_user.id):
         help_text += """
-        
         Команды администратора:
-        [другие админ-команды]
+        /restart - перезапустить бота
         """
     
     bot.reply_to(message, help_text)
@@ -154,7 +162,6 @@ def game_handler(message):
     current_item = current_state["current_item"]
     
     try:
-        # Формируем строгий запрос
         prompt = (
             f"Ответь только 'да' или 'нет'. "
             f"В классической логике игр, {user_item} бьёт {current_item}?"
@@ -201,6 +208,16 @@ def handle_reset(message):
     else:
         bot.reply_to(message, "⚠️ История не найдена")
 
+@bot.message_handler(commands=['restart'])
+def handle_restart(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ У вас нет прав на эту команду")
+        return
+        
+    bot.reply_to(message, "🔄 Инициирован перезапуск бота...")
+    conn.close()
+    os.execl(sys.executable, sys.executable, *sys.argv)
+
 @bot.message_handler(content_types=['text'])
 def send_text(message):
     if message.text.startswith('/'):
@@ -226,6 +243,22 @@ def send_text(message):
         bot.send_message(chat_id, f"❌ Ошибка: {str(e)}")
         print(f"API Error: {e}")
 
+def get_all_chat_ids():
+    cursor.execute('SELECT chat_id FROM chats')
+    return [row[0] for row in cursor.fetchall()]
+
+def notify_all_users():
+    for chat_id in get_all_chat_ids():
+        try:
+            bot.send_message(chat_id, "🚀 Бот был перезапущен и готов к работе!")
+        except Exception as e:
+            print(f"Ошибка отправки в {chat_id}: {str(e)}")
+
 if __name__ == '__main__':
     print("Бот запущен...")
-    bot.polling()
+    try:
+        notify_all_users()
+        bot.polling()
+    except Exception as e:
+        print(f"Critical error: {e}")
+        conn.close()
